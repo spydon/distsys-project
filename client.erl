@@ -29,13 +29,15 @@ handler(Host) ->
 %% the connector
 disconnected(Window) ->
     receive
-    {connected, ServerPid} -> 
-        insert_str(Window, "Connected to the transaction server\n"),
-        set_title(Window, "Connected"),
-        connected(Window, ServerPid);
-    {'Exit', _, _} -> exit(died);
-    Other -> io:format("client disconnected unexpected:~p~n",[Other]),
-         disconnected(Window)
+        {connected, ServerPid} -> 
+            insert_str(Window, "Connected to the transaction server\n"),
+            set_title(Window, "Connected"),
+            connected(Window, ServerPid);
+        {'Exit', _, _} ->
+            exit(died);
+        Other ->
+            io:format("client disconnected unexpected:~p~n",[Other]),
+            disconnected(Window)
     end.
 %%%%%%%%%%%%%%%%%%%%%%% INACTIVE CLIENT %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
@@ -48,12 +50,14 @@ start_connector(Host) ->
 try_to_connect(Parent, Host) ->
     %% Parent is the Pid of the process (handler) that spawned this process
     {transaction_server, Host} ! {login, self(), Parent},
-    receive 
-    {ok, ServerPid} -> Parent ! {connected, ServerPid},
-               exit(connectorFinished);
-    Any -> io:format("Unexpected message~p.~n",[Any])
+    receive
+        {ok, ServerPid} -> 
+            Parent ! {connected, ServerPid},
+            exit(connectorFinished);
+        Any ->
+            io:format("Unexpected message ~p.~n",[Any])
     after 5000 ->
-    io:format("Unable to connect to the transaction server at node~p. Restart the client application later.~n",[Host])
+        io:format("Unable to connect to the transaction server at node~p. Restart the client application later.~n",[Host])
     end,
     exit(serverBusy).
 %%%%%%%%%%%%%%%%%%%%%%% CONNECTOR %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
@@ -64,47 +68,54 @@ try_to_connect(Parent, Host) ->
 %%%%%%%%%%%%%%%%%%%%%%% ACTIVE CLIENT %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 connected(Window, ServerPid) ->
     receive
-    %% - The user has requested a transaction
-    {request, Window, Transaction} ->
-        io:format("Client requested the transaction ~p.~n",[Transaction]),
-        insert_str(Window, "Processing request...\n"),
-        process(Window, ServerPid, Transaction);
-    {'EXIT', Window, windowDestroyed} -> end_client(ServerPid);
-    {close, ServerPid} -> exit(serverDied);
-    Other ->
-        io:format("client active unexpected: ~p~n",[Other]),
-        connected(Window,ServerPid)
+        %% - The user has requested a transaction
+        {request, Window, Transaction} ->
+            io:format("Client requested the transaction ~p.~n",[Transaction]),
+            insert_str(Window, "Processing request...\n"),
+            process(Window, ServerPid, Transaction);
+        {'EXIT', Window, windowDestroyed} ->
+            end_client(ServerPid);
+        {close, ServerPid} ->
+            exit(serverDied);
+        Other ->
+            io:format("client active unexpected: ~p~n",[Other]),
+            connected(Window,ServerPid)
     end.
 
 %% - Asking to process a request
 process(Window, ServerPid, Transaction) ->
     ServerPid ! {request, self()}, %% Send a request to server and wait for proceed message
     receive
-    {proceed, ServerPid} -> send(Window, ServerPid, Transaction); %% received green light send the transaction.
-    {close, ServerPid} -> exit(serverDied);
-    Other ->
-        io:format("client active unexpected: ~p~n",[Other])
+        {proceed, ServerPid} ->
+            send(Window, ServerPid, Transaction); %% received green light send the transaction.
+        {close, ServerPid} ->
+            exit(serverDied);
+        Other ->
+            io:format("client active unexpected: ~p~n",[Other])
     end.
 
 %% - Sending the transaction and waiting for confirmation
 send(Window, ServerPid, []) ->
     ServerPid ! {confirm, self()}, %% Once all the list (transaction) items sent, send confirmation
     receive
-    {abort, ServerPid} -> insert_str(Window, "Aborted... type run if you want to try again!\n"),
-               connected(Window, ServerPid);
-    {committed, ServerPid} -> insert_str(Window, "Transaction succeeded!\n"),
-              connected(Window, ServerPid);
-    {'EXIT', Window, windowDestroyed} -> end_client(ServerPid);
-    {close, ServerPid} -> 
-        exit(serverDied);
-    Other ->
-        io:format("client active unexpected: ~p~n",[Other])
+        {abort, ServerPid} ->
+            insert_str(Window, "Aborted... type run if you want to try again!\n"),
+            connected(Window, ServerPid);
+        {committed, ServerPid} ->
+            insert_str(Window, "Transaction succeeded!\n"),
+            connected(Window, ServerPid);
+        {'EXIT', Window, windowDestroyed} ->
+            end_client(ServerPid);
+        {close, ServerPid} ->
+            exit(serverDied);
+        Other ->
+            io:format("client active unexpected: ~p~n",[Other])
     end;
-send(Window, ServerPid, [H|T]) -> 
-    sleep(3), 
+send(Window, ServerPid, [H|T]) ->
+    sleep(3),
     case loose(0) of
-    %% In order to handle losses, think about adding an extra field to the message sent
-    false -> ServerPid ! {action, self(), H}; 
+        %% In order to handle losses, think about adding an extra field to the message sent
+        false -> ServerPid ! {action, self(), H};
         true -> ok
     end,
     send(Window, ServerPid, T).
@@ -124,7 +135,7 @@ end_client(ServerPid) ->
 sleep(Latency) ->
     receive
     after 1000*random:uniform(Latency) ->
-      true
+        true
     end.
 
 %% - Loses messages randomly
@@ -135,8 +146,8 @@ sleep(Latency) ->
 %%        - if lossyness =6 the function will return either values with 
 %%        probability 1/2    
 loose(Lossyness) -> 
-    Val=random:uniform(10),
+    Val = random:uniform(10),
     if
-    Val >= Lossyness -> false;
-    true -> true
+        Val >= Lossyness -> false;
+        true -> true
     end.
