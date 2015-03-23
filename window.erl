@@ -31,7 +31,7 @@ start(ClientPID) ->
 set_title(Pid, Str) -> Pid ! {title, Str}.
 insert_str(Pid, Str) -> Pid ! {insert, Str}.
 set_prompt(Pid, Str) -> Pid ! {prompt, Str}.
-    
+
 %% Starts a window
 %% Do not bother trying to understand this code.
 widget(ClientPID) ->
@@ -47,39 +47,39 @@ widget(ClientPID) ->
 
 loop(Win, ClientPID, Prompt, Transaction) ->
     receive
-	{title, Str} ->
-	    gs:config(Win, [{title, Str}]),
-	    loop(Win, ClientPID, Prompt, Transaction);
-	{insert, Str} ->
-	    gs:config(editor, {insert, {'end', Str}}),
-	    scroll_to_show_last_line(),
-	    loop(Win, ClientPID, Prompt, Transaction);
-	{gs,_,destroy,_,_} ->
-	    %%io:format("Destroyed~n",[]),
-	    exit(windowDestroyed);
-	{prompt, Str} ->
-	    %%io:format("Received new prompt ~p.~n",[Str]),
-	    gs:config(entry, {delete, {0, last}}),
-	    gs:config(entry, {insert, {0, Str}}),
-	    loop(Win, ClientPID, Str, Transaction);
-	{gs, entry,keypress,_,['Return'|_]} ->
-	    Text = gs:read(entry, text),
-	    %%io:format("Read:~p~n", [Text]),
-	    gs:config(entry, {delete, {0, last}}),
-	    gs:config(entry, {insert, {0, Prompt}}),
-	    self() ! {insert, Text ++ ["\n"]},
-	    try parse(Text) of 
-		{run} -> case Transaction of
-			     [] -> self() ! {insert, "Nothing to be done\n"};
-			     _ -> ClientPID ! {request, self(), Transaction}
-			 end;
+    {title, Str} ->
+        gs:config(Win, [{title, Str}]),
+        loop(Win, ClientPID, Prompt, Transaction);
+    {insert, Str} ->
+        gs:config(editor, {insert, {'end', Str}}),
+        scroll_to_show_last_line(),
+        loop(Win, ClientPID, Prompt, Transaction);
+    {gs,_,destroy,_,_} ->
+        %%io:format("Destroyed~n",[]),
+        exit(windowDestroyed);
+    {prompt, Str} ->
+        %%io:format("Received new prompt ~p.~n",[Str]),
+        gs:config(entry, {delete, {0, last}}),
+        gs:config(entry, {insert, {0, Str}}),
+        loop(Win, ClientPID, Str, Transaction);
+    {gs, entry,keypress,_,['Return'|_]} ->
+        Text = gs:read(entry, text),
+        %%io:format("Read:~p~n", [Text]),
+        gs:config(entry, {delete, {0, last}}),
+        gs:config(entry, {insert, {0, Prompt}}),
+        self() ! {insert, Text ++ ["\n"]},
+        try parse(Text) of 
+        {run} -> case Transaction of
+                 [] -> self() ! {insert, "Nothing to be done\n"};
+                 _ -> ClientPID ! {request, self(), Transaction}
+             end;
 
-		{reset} -> loop(Win, ClientPID, Prompt, []);
-		Com -> loop(Win, ClientPID, Prompt, Transaction ++ [Com])
-	    catch
-		throw:Error ->
-		    self() ! {insert, Error ++ "\n"}
-	    end,
+        {reset} -> loop(Win, ClientPID, Prompt, []);
+        Com -> loop(Win, ClientPID, Prompt, Transaction ++ [Com])
+        catch
+        throw:Error ->
+            self() ! {insert, Error ++ "\n"}
+        end,
             loop(Win, ClientPID, Prompt, Transaction);
         {gs,_,configure,[],[W,H,_,_]} ->
             gs:config(packer, [{width,W},{height,H}]),
@@ -97,8 +97,7 @@ scroll_to_show_last_line() ->
     CharHeight = gs:read(editor, char_height),
     TopRow = Size - Height/CharHeight,
     if TopRow > 0 ->
-	    gs:config(editor, {vscrollpos, TopRow});
+        gs:config(editor, {vscrollpos, TopRow});
        true ->
-	    gs:config(editor, {vscrollpos, 0})
+        gs:config(editor, {vscrollpos, 0})
     end.
-

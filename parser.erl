@@ -22,46 +22,46 @@
 %% main function
 parse(Str) -> 
     case parse_expression(skip_to_prompt(Str),{}) of
-	{error, Why} -> throw(Why);
-	Com -> Com
+    {error, Why} -> throw(Why);
+    Com -> Com
     end.
 
 %% function to parse expression
 parse_expression(T,{}) ->
     case get_token(T) of 
-	{token_action, Action, Tail} -> parse_expression(Tail,{Action});
-	_ -> {error, "Expected read, write, run or reset command"}
+    {token_action, Action, Tail} -> parse_expression(Tail,{Action});
+    _ -> {error, "Expected read, write, run or reset command"}
     end;
 parse_expression(T,{run}) ->
     case get_token(T) of 
-	{token_end} -> {run};
-	_ -> {error, "Command run takes no argument"}
+    {token_end} -> {run};
+    _ -> {error, "Command run takes no argument"}
     end;
 parse_expression(T,{reset}) ->
     case get_token(T) of 
-	{token_end} -> {reset};
-	_ -> {error, "Command reset takes no argument"}
+    {token_end} -> {reset};
+    _ -> {error, "Command reset takes no argument"}
     end;
 parse_expression(T,{Action}) ->
     case get_token(T) of 
-	{token_name, Name, Tail} -> parse_expression(Tail, {Action, Name});
-	_ -> {error, "Expected variable name {a,b,c,d}"}
+    {token_name, Name, Tail} -> parse_expression(Tail, {Action, Name});
+    _ -> {error, "Expected variable name {a,b,c,d}"}
     end;
 parse_expression(T,{read, Name}) -> 
     case get_token(T) of 
-	{token_end} -> {read,Name};
-	_ -> {error, "Wrong number of arguments"}
+    {token_end} -> {read,Name};
+    _ -> {error, "Wrong number of arguments"}
     end;
 parse_expression(T,{write, Name}) ->
     case get_token(T) of 
-	{token_end} -> {write,Name,0};
-	{token_value, Val, Tail} -> parse_expression(Tail, {write,Name,Val});
-	_ -> {error, "Expected number"}
+    {token_end} -> {write,Name,0};
+    {token_value, Val, Tail} -> parse_expression(Tail, {write,Name,Val});
+    _ -> {error, "Expected number"}
     end;
 parse_expression(T,{write,Name,Val}) ->
     case get_token(T) of
-	{token_end} -> {write,Name,Val};
-	_ -> {error, "Wrong number of arguments"}
+    {token_end} -> {write,Name,Val};
+    _ -> {error, "Wrong number of arguments"}
     end. 
 
 %% function to read the tokens

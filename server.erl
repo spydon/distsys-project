@@ -13,10 +13,10 @@
 %%%%%%%%%%%%%%%%%%%%%%% STARTING SERVER %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 start() -> 
     register(transaction_server, spawn(fun() ->
-					       process_flag(trap_exit, true),
-					       Val= (catch initialize()),
-					       io:format("Server terminated with:~p~n",[Val])
-				       end)).
+                           process_flag(trap_exit, true),
+                           Val= (catch initialize()),
+                           io:format("Server terminated with:~p~n",[Val])
+                       end)).
 
 initialize() ->
     process_flag(trap_exit, true),
@@ -32,37 +32,37 @@ initialize() ->
 %% the values of the global variable a, b, c and d 
 server_loop(ClientList,StorePid) ->
     receive
-	{login, MM, Client} -> 
-	    MM ! {ok, self()},
-	    io:format("New client has joined the server:~p.~n", [Client]),
-	    StorePid ! {print, self()},
-	    server_loop(add_client(Client,ClientList),StorePid);
-	{close, Client} -> 
-	    io:format("Client~p has left the server.~n", [Client]),
-	    StorePid ! {print, self()},
-	    server_loop(remove_client(Client,ClientList),StorePid);
-	{request, Client} -> 
-	    Client ! {proceed, self()},
-	    server_loop(ClientList,StorePid);
-	{confirm, Client} -> 
-	    Client ! {abort, self()},
-	    server_loop(ClientList,StorePid);
-	{action, Client, Act} ->
-	    io:format("Received~p from client~p.~n", [Act, Client]),
-	    server_loop(ClientList,StorePid)
+    {login, MM, Client} -> 
+        MM ! {ok, self()},
+        io:format("New client has joined the server:~p.~n", [Client]),
+        StorePid ! {print, self()},
+        server_loop(add_client(Client,ClientList),StorePid);
+    {close, Client} -> 
+        io:format("Client~p has left the server.~n", [Client]),
+        StorePid ! {print, self()},
+        server_loop(remove_client(Client,ClientList),StorePid);
+    {request, Client} -> 
+        Client ! {proceed, self()},
+        server_loop(ClientList,StorePid);
+    {confirm, Client} -> 
+        Client ! {abort, self()},
+        server_loop(ClientList,StorePid);
+    {action, Client, Act} ->
+        io:format("Received~p from client~p.~n", [Act, Client]),
+        server_loop(ClientList,StorePid)
     after 50000 ->
-	case all_gone(ClientList) of
-	    true -> exit(normal);    
-	    false -> server_loop(ClientList,StorePid)
-	end
+    case all_gone(ClientList) of
+        true -> exit(normal);    
+        false -> server_loop(ClientList,StorePid)
+    end
     end.
 
 %% - The values are maintained here
 store_loop(ServerPid, Database) -> 
     receive
-	{print, ServerPid} -> 
-	    io:format("Database status:~n~p.~n",[Database]),
-	    store_loop(ServerPid,Database)
+    {print, ServerPid} -> 
+        io:format("Database status:~n~p.~n",[Database]),
+        store_loop(ServerPid,Database)
     end.
 %%%%%%%%%%%%%%%%%%%%%%% ACTIVE SERVER %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
