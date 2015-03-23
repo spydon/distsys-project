@@ -80,15 +80,15 @@ connected(Window, ServerPid) ->
 process(Window, ServerPid, Transaction) ->
     ServerPid ! {request, self()}, %% Send a request to server and wait for proceed message
     receive
-    {proceed, ServerPid} -> send(Window, ServerPid, Transaction); %% received green light send the transaction.
+    {proceed, ServerPid} -> send(Window, ServerPid, Transaction, length(Transaction)); %% received green light send the transaction.
     {close, ServerPid} -> exit(serverDied);
     Other ->
         io:format("client active unexpected: ~p~n",[Other])
     end.
 
 %% - Sending the transaction and waiting for confirmation
-send(Window, ServerPid, []) ->
-    ServerPid ! {confirm, self()}, %% Once all the list (transaction) items sent, send confirmation
+send(Window, ServerPid, [], TransLength) ->
+    ServerPid ! {confirm, self(),TransLength}, %% Once all the list (transaction) items sent, send confirmation
     receive
     {abort, ServerPid} -> insert_str(Window, "Aborted... type run if you want to try again!\n"),
                connected(Window, ServerPid);
@@ -100,14 +100,14 @@ send(Window, ServerPid, []) ->
     Other ->
         io:format("client active unexpected: ~p~n",[Other])
     end;
-send(Window, ServerPid, [H|T]) -> 
+send(Window, ServerPid, [H|T],TransLength) -> 
     sleep(3), 
-    case loose(0) of
+    case loose(1) of
     %% In order to handle losses, think about adding an extra field to the message sent
     false -> ServerPid ! {action, self(), H}; 
         true -> ok
     end,
-    send(Window, ServerPid, T).
+    send(Window, ServerPid, T,TransLength).
 %%%%%%%%%%%%%%%%%%%%%%% Active Window %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 
