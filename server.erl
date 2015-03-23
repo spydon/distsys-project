@@ -20,7 +20,10 @@ start() ->
 
 initialize() ->
     process_flag(trap_exit, true),
-    Initialvals = [{a,0},{b,0},{c,0},{d,0}], %% All variables are set to 0
+    Initialvals = [{a, {readlock, 0}, {writelock, 0}, 0},
+                   {b, {readlock, 0}, {writelock, 0}, 0},
+                   {c, {readlock, 0}, {writelock, 0}, 0},
+                   {d, {readlock, 0}, {writelock, 0}, 0}], %% All variables are set to 0
     ServerPid = self(),
     StorePid = spawn_link(fun() -> store_loop(ServerPid,Initialvals) end),
     server_loop([],StorePid).
@@ -29,7 +32,7 @@ initialize() ->
 
 %%%%%%%%%%%%%%%%%%%%%%% ACTIVE SERVER %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 %% - The server maintains a list of all connected clients and a store holding
-%% the values of the global variable a, b, c and d 
+%% the values of the global variable a, b, c and d
 server_loop(ClientList,StorePid) ->
     receive
     {login, MM, Client} -> 
@@ -52,7 +55,7 @@ server_loop(ClientList,StorePid) ->
         server_loop(ClientList,StorePid)
     after 50000 ->
     case all_gone(ClientList) of
-        true -> exit(normal);    
+        true -> exit(normal);
         false -> server_loop(ClientList,StorePid)
     end
     end.
