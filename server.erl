@@ -47,36 +47,36 @@ initialize() ->
 server_loop(ClientList, StorePid, TransState) ->
     io:format("Transaction State: ~p.~n", [TransState]),
     receive
-    {login, MM, Client} -> 
-        MM ! {ok, self()},
-        io:format("New client has joined the server:~p.~n", [Client]),
-        StorePid ! {print, self()},
-        server_loop([Client | ClientList], StorePid, TransState);
-    {close, Client} -> 
-        io:format("Client~p has left the server.~n", [Client]),
-        StorePid ! {print, self()},
-        server_loop(lists:delete(Client, ClientList), StorePid, TransState);
-    {request, Client} -> 
-        Client ! {proceed, self()},
-        server_loop(ClientList, StorePid, [{Client, []}|TransState]);
-    {confirm, Client, NumActions} -> 
-        case length(get_actions(Client, TransState)) of  
-		NumActions -> 
-			StorePid ! {actions,self()},
-			Client ! {committed,self()},			
-			io:format("All actions received.~n");
-		true -> 
-			Client ! {abort,self()},
-			io:format("Not all actions received.~n")
-	end,
-        server_loop(ClientList, StorePid, delete_actions(Client, TransState));
-    {action, Client, Act} ->
-        io:format("Received~p from client~p.~n", [Act, Client]),
-        server_loop(ClientList, StorePid, add_action(Client, Act, TransState)),
-        case ClientList of
-            [] -> exit(normal);
-            _ -> server_loop(ClientList, StorePid, TransState)
-        end
+        {login, MM, Client} -> 
+            MM ! {ok, self()},
+            io:format("New client has joined the server:~p.~n", [Client]),
+            StorePid ! {print, self()},
+            server_loop([Client | ClientList], StorePid, TransState);
+        {close, Client} -> 
+            io:format("Client~p has left the server.~n", [Client]),
+            StorePid ! {print, self()},
+            server_loop(lists:delete(Client, ClientList), StorePid, TransState);
+        {request, Client} -> 
+            Client ! {proceed, self()},
+            server_loop(ClientList, StorePid, [{Client, []}|TransState]);
+        {confirm, Client, NumActions} -> 
+            case length(get_actions(Client, TransState)) of
+                NumActions -> 
+                    StorePid ! {actions, self()},
+                    Client ! {committed, self()},
+                    io:format("All actions received.~n");
+                true -> 
+                    Client ! {abort, self()},
+                    io:format("Not all actions received.~n")
+                end,
+            server_loop(ClientList, StorePid, delete_actions(Client, TransState));
+        {action, Client, Act} ->
+            io:format("Received~p from client~p.~n", [Act, Client]),
+            server_loop(ClientList, StorePid, add_action(Client, Act, TransState)),
+            case ClientList of
+                [] -> exit(normal);
+                _ -> server_loop(ClientList, StorePid, TransState)
+            end
     end.
 
 %% - The values are maintained here
@@ -116,7 +116,8 @@ lock(Lock, Pid, Locks) -> semaphore(Lock, Pid, Locks).
 unlock(Lock, Locks) -> semaphore(Lock, [], Locks).
 
 %% - Manipulation of lock tuples
-semaphore(_Lock, _Pid, []) -> [];
+semaphore(_Lock, _Pid, []) ->
+    [];
 semaphore(Lock = {Prop, readlock}, Pid, [{Prop, readlock, _Value} | TL]) ->
     [{Prop, readlock, Pid} | lock(Lock, Pid, TL)];
 semaphore(Lock = {Prop, writelock}, Pid, [{Prop, LockType, _Value} | TL]) ->
