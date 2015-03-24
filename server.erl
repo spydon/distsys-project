@@ -58,10 +58,10 @@ server_loop(ClientList, StorePid, TransState) ->
             server_loop(lists:delete(Client, ClientList), StorePid, TransState);
         {request, Client} -> 
             Client ! {proceed, self()},
-            server_loop(ClientList, StorePid, [{Client, []}|TransState]);
+            server_loop(ClientList, StorePid, [{Client, []} | TransState]);
         {confirm, Client, NumActions} -> 
             io:format("get_actions: ~p .~n", [length(get_actions(Client, TransState))]),
-            case length(get_actions(Client, TransState)) of  
+            case length(get_actions(Client, TransState)) of
                 NumActions -> 
                     StorePid ! {actions, self()},
                     Client ! {committed, self()},
@@ -82,11 +82,11 @@ server_loop(ClientList, StorePid, TransState) ->
                             Client ! {abort,self()},
                             io:format("Lost msg detected.~n"),
                             server_loop(ClientList, StorePid, delete_actions(Client, TransState))
-                    end;              
-                [{_, Prev} | _TL]->             
-                    case Prev +1 of 
+                    end;
+                [{_, Prev} | _TL] ->
+                    case Prev +1 of
                         Num ->
-                            server_loop(ClientList, StorePid, add_action(Client, Act, Num, TransState));             
+                            server_loop(ClientList, StorePid, add_action(Client, Act, Num, TransState));
                         _ ->
                             Client ! {abort,self()},
                             io:format("Lost msg detected.~n"),
@@ -98,6 +98,18 @@ server_loop(ClientList, StorePid, TransState) ->
                 _ -> server_loop(ClientList, StorePid, TransState)
             end
     end.
+
+%% - The logic around the locks are maintained here
+transaction(ClientPid, Transaction) ->
+    [].
+
+%% - Checks which locks that are required for Transaction
+lock_check([]) ->
+    [];
+lock_check([{read, Prop} | TL]) ->
+    [{Prop, readlock} | lock_check(TL)];
+lock_check([{write, Prop, _Value} | TL]) ->
+    [{Prop, writelock} | lock_check(TL)].
 
 %% - The values are maintained here
 store_loop(Database, Locks) ->
