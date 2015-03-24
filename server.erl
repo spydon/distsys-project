@@ -60,19 +60,39 @@ server_loop(ClientList, StorePid, TransState) ->
         Client ! {proceed, self()},
         server_loop(ClientList, StorePid, [{Client, []}|TransState]);
     {confirm, Client, NumActions} -> 
+        io:format("get_actions: ~p .~n", [length(get_actions(Client, TransState))]),
         case length(get_actions(Client, TransState)) of  
-		NumActions -> 
-			StorePid ! {actions,self()},
-			Client ! {committed,self()},			
-			io:format("All actions received.~n");
-		true -> 
-			Client ! {abort,self()},
-			io:format("Not all actions received.~n")
-	end,
+		    NumActions -> 
+			    StorePid ! {actions,self()},
+			    Client ! {committed,self()},			
+			    io:format("All actions received.~n");
+		    _ -> 
+			    Client ! {abort,self()},
+			    io:format("Not all actions received.~n")
+	    end,
         server_loop(ClientList, StorePid, delete_actions(Client, TransState));
-    {action, Client, Act} ->
-        io:format("Received~p from client~p.~n", [Act, Client]),
-        server_loop(ClientList, StorePid, add_action(Client, Act, TransState)),
+    {action, Client, Act, Num} ->
+        io:format("Received~p, number ~p, from client~p.~n", [Act, Num, Client]),
+        case get_actions(Client, TransState) of
+            [] -> 
+                case Num of 
+                    1 -> 
+                        server_loop(ClientList, StorePid, add_action(Client, Act, Num, TransState));
+                    _ ->
+                        Client ! {abort,self()},
+                        io:format("Lost msg detected.~n"),
+                        server_loop(ClientList, StorePid, delete_actions(Client, TransState))
+                end;              
+            [{_, Prev} | _TL]->             
+                case Prev +1 of 
+                    Num ->
+                        server_loop(ClientList, StorePid, add_action(Client, Act, Num, TransState));             
+                    _ ->
+                        Client ! {abort,self()},
+                        io:format("Lost msg detected.~n"),
+                        server_loop(ClientList, StorePid, delete_actions(Client, TransState))
+                end
+        end,
         case ClientList of
             [] -> exit(normal);
             _ -> server_loop(ClientList, StorePid, TransState)
@@ -124,9 +144,9 @@ semaphore(Lock = {Prop, writelock}, Pid, [{Prop, LockType, _Value} | TL]) ->
 semaphore(Lock, Pid, [HD | TL]) ->
     [HD | semaphore(Lock, Pid, TL)].
 
-add_action(_C, _A, []) -> [];
-add_action(C, A, [{C, Actions} | T]) -> [{C, [A | Actions]} | T];
-add_action(C, A, [{H, Actions} | T]) -> [{H,Actions} | add_action(C, A, T)].
+add_action(_C, _A, _O, []) -> [];
+add_action(C, A, O, [{C, Actions} | T]) -> [{C, [{A,O} | Actions]} | T];
+add_action(C, A, O, [{H, Actions} | T]) -> [{H,Actions} | add_action(C, A, O, T)].
 
 delete_actions(_C, []) -> [];
 delete_actions(C, [{C, _Actions} | T]) -> T;
