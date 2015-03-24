@@ -32,14 +32,10 @@ initialize() ->
 
 %%%%%%%%%%%%%%%%%%%%%%% ACTIVE SERVER %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 %% - The server maintains a list of all connected clients and a store holding
-<<<<<<< HEAD
+
 %% the values of the global variable a, b, c and d 
 server_loop(ClientList,StorePid,TransState) ->
     io:format("Transaction State: ~p.~n", [TransState]),
-=======
-%% the values of the global variable a, b, c and d
-server_loop(ClientList,StorePid) ->
->>>>>>> 9701068154275da15ea490e09fb1949491890f96
     receive
     {login, MM, Client} -> 
         MM ! {ok, self()},
@@ -69,13 +65,8 @@ server_loop(ClientList,StorePid) ->
         server_loop(ClientList,StorePid,add_action(Client,Act,TransState))
     after 50000 ->
     case all_gone(ClientList) of
-<<<<<<< HEAD
         true -> exit(normal);    
         false -> server_loop(ClientList,StorePid,TransState)
-=======
-        true -> exit(normal);
-        false -> server_loop(ClientList,StorePid)
->>>>>>> 9701068154275da15ea490e09fb1949491890f96
     end
     end.
 
