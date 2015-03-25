@@ -113,7 +113,7 @@ send(Window, ServerPid, [], TransLength) ->
     end;
 send(Window, ServerPid, [H|T], TransLength) -> 
     sleep(3),
-    case loose(5) of
+    case loose(0) of
         %% In order to handle losses, think about adding an extra field to the message sent
         false -> ServerPid ! {action, self(), H, TransLength-length(T)};
         true -> ok

@@ -35,8 +35,8 @@ initialize() ->
                     {b, writelock, []},
                     {c, writelock, []},
                     {d, writelock, []}],
-    StorePid = spawn_link(fun() -> store_loop(InitialVals, InitialLocks, [], self()) end),
-    server_loop([], StorePid, []).
+    StorePid = spawn_link(fun() -> store_loop(InitialVals, InitialLocks, [], sets:new(), self()) end),
+    server_loop([], StorePid, [], sets:new()).
 %%%%%%%%%%%%%%%%%%%%%%% STARTING SERVER %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 
@@ -44,54 +44,62 @@ initialize() ->
 %% - The server maintains a list of all connected clients and a store holding
 
 %% the values of the global variable a, b, c and d 
-server_loop(ClientList, StorePid, TransState) ->
-    io:format("Transaction State: ~p.~n", [TransState]),
+server_loop(ClientList, StorePid, TransState, AbortSet) ->
     receive
         {login, MM, Client} -> 
             MM ! {ok, self()},
-            io:format("New client has joined the server:~p.~n", [Client]),
+            io:format("~p New client has joined the server.~n", [Client]),
             StorePid ! {print, self()},
-            server_loop([Client | ClientList], StorePid, TransState);
+            server_loop([Client | ClientList], StorePid, TransState, AbortSet);
         {close, Client} -> 
-            io:format("Client~p has left the server.~n", [Client]),
+            io:format("~p Client has left the server.~n", [Client]),
             StorePid ! {print, self()},
-            server_loop(lists:delete(Client, ClientList), StorePid, TransState);
+            server_loop(lists:delete(Client, ClientList), StorePid, TransState, AbortSet);
         {request, Client} -> 
             Client ! {proceed, self()},
-            server_loop(ClientList, StorePid, [{Client, []} | TransState]);
-        {confirm, Client, NumActions} -> 
-            io:format("get_actions: ~p .~n", [length(get_actions(Client, TransState))]),
-            case length(get_actions(Client, TransState)) of
-                NumActions -> 
+            server_loop(ClientList, StorePid, [{Client, []} | TransState], AbortSet);
+        {confirm, Client, NumActions} ->
+            case {sets:is_element(Client, AbortSet), length(get_actions(Client, TransState))} of
+                {true, _} ->
+                    Client ! {abort, self()},
+                    io:format("~p Transaction could not receive all locks needed~n", [Client]);
+                {_, NumActions} -> 
                     StorePid ! {committed, Client},
                     Client ! {committed, self()},
-                    io:format("All actions received from ~p.~n", [Client]);
+                    io:format("~p All actions received.~n", [Client]);
                 _ ->
                     Client ! {abort, self()},
-                    io:format("Not all actions received from ~p.~n", [Client])
+                    io:format("~p Not all actions received.~n", [Client])
             end,
-            server_loop(ClientList, StorePid, delete_actions(Client, TransState));
-        {abort, Client} ->
-            io:format("Transaction for ~p aborted.~n", [Client]),
-            StorePid ! {abort, Client, self()},
-            Client ! {abort, self()},
-            server_loop(ClientList, StorePid, delete_actions(Client, TransState));
+            server_loop(ClientList, StorePid, delete_actions(Client, TransState), sets:del_element(Client, AbortSet));
+        {abort, Client, SenderPid} ->
+            io:format("~p transaction aborted.~n", [Client]),
+            case SenderPid of
+                StorePid ->
+                    true;
+                _ ->
+                    StorePid ! {abort, Client, self()}
+            end,
+            io:format("~nTransaction State:~n~p.~n~n", [TransState]),
+            server_loop(ClientList, StorePid, delete_actions(Client, TransState), sets:add_element(Client, AbortSet));
         {action, Client, Act, Num} ->
-            io:format("Received~p, number ~p, from client~p.~n", [Act, Num, Client]),
-            case get_previous(get_actions(Client, TransState))+1 of
-                Num ->
+            case {sets:is_element(Client, AbortSet), get_previous(get_actions(Client, TransState))+1} of
+                {true, _} ->
+                    server_loop(ClientList, StorePid, TransState, AbortSet);
+                {_, Num} ->
+                    io:format("~p Received ~p, msg number ~p.~n", [Client, Act, Num]),
                     case Act of
                         {read, Prop} -> StorePid ! {read, Prop, Client};
                         {write, Prop, Value} -> StorePid ! {write, Prop, Value, Client}
                     end,
-                    server_loop(ClientList, StorePid, add_action(Client, Act, Num, TransState));
+                    server_loop(ClientList, StorePid, add_action(Client, Act, Num, TransState), AbortSet);
                 _ ->
-                    io:format("Lost msg for ~p detected.~n", [Client]),
-                    self() ! {abort, Client}
+                    io:format("~p Lost msg detected.~n", [Client]),
+                    self() ! {abort, Client, self()}
             end,
             case ClientList of
                 [] -> exit(normal);
-                _ -> server_loop(ClientList, StorePid, TransState)
+                _ -> server_loop(ClientList, StorePid, TransState, AbortSet)
             end
     end.
 
@@ -99,38 +107,52 @@ get_previous([]) -> 0;
 get_previous([{_, Prev} | _TL]) -> Prev.
 
 %% - The values are maintained here
-store_loop(Database, Locks, NotConfirmed, ServerPid) ->
+store_loop(Database, Locks, NotConfirmed, AbortSet, ServerPid) ->
     receive
         {print, _Pid} ->
-            io:format("Database status:~n~p.~n", [Database]),
-            store_loop(Database, Locks, NotConfirmed, ServerPid);
+            io:format("~nDatabase status:~n~p.~n", [Database]),
+            store_loop(Database, Locks, NotConfirmed, AbortSet, ServerPid);
         {read, Prop, Pid} ->
-            io:format("~p tries to read: ~p.~n", [Pid, Prop]),
-            {Success, NewLocks} = lock_handler({Prop, readlock}, Pid, Locks),
-            io:format("Lock state:~n~p~n", [NewLocks]),
-            case Success of
+            case sets:is_element(Pid, AbortSet) of
                 true ->
-                    io:format("~p read ~p from ~p.~n", [Pid, read(Prop, Database), Prop]),
-                    self() ! {actions, self()},
-                    store_loop(Database, NewLocks, [{read, Prop, Pid} | NotConfirmed], ServerPid);
+                    % Silently skip part of an already aborted transaction
+                    store_loop(Database, Locks, NotConfirmed, AbortSet, ServerPid);
                 false ->
-                    io:format("~p failed to read ~p, aborting~n", [Pid, Prop]),
-                    self() ! {abort, Pid}
+                    io:format("~p tries to read: ~p.~n", [Pid, Prop]),
+                    {Success, NewLocks} = lock_handler({Prop, readlock}, Pid, Locks),
+                    io:format("~nLock state:~n~p~n", [NewLocks]),
+                    case Success of
+                        true ->
+                            io:format("~p read ~p from ~p.~n", [Pid, read(Prop, Database), Prop]),
+                            store_loop(Database, NewLocks, [{read, Prop, Pid} | NotConfirmed], AbortSet, ServerPid);
+                        false ->
+                            io:format("~p failed to read ~p, aborting~n", [Pid, Prop]),
+                            self() ! {abort, Pid, self()},
+                            store_loop(Database, NewLocks, NotConfirmed, sets:add_element(Pid, AbortSet), ServerPid)
+                    end
             end;
         {write, Prop, Value, Pid} ->
-            io:format("~p tries to write ~p to ~p.~n", [Pid, Value, Prop]),
-            {Success, NewLocks} = lock_handler({Prop, writelock}, Pid, Locks),
-            io:format("Lock state:~n~p~n", [NewLocks]),
-            case Success of
+            case sets:is_element(Pid, AbortSet) of
                 true ->
-                    OldValue = read(Prop, Database),
-                    store_loop(write(Prop, Value, Database), NewLocks, [{write, Prop, OldValue, Pid} | NotConfirmed], ServerPid);
+                    % Silently abort part of already aborted transaction
+                    store_loop(Database, Locks, NotConfirmed, AbortSet, ServerPid);
                 false ->
-                    io:format("~p failed to write ~p, aborting~n", [Pid, Prop]),
-                    self() ! {abort, Pid}
+                    io:format("~p tries to write ~p to ~p.~n", [Pid, Value, Prop]),
+                    {Success, NewLocks} = lock_handler({Prop, writelock}, Pid, Locks),
+                    io:format("~nLock state:~n~p~n", [NewLocks]),
+                    case Success of
+                        true ->
+                            io:format("~p successfully wrote ~p to ~p.~n", [Pid, Value, Prop]),
+                            OldValue = read(Prop, Database),
+                            store_loop(write(Prop, Value, Database), NewLocks, [{write, Prop, OldValue, Pid} | NotConfirmed], AbortSet, ServerPid);
+                        false ->
+                            io:format("~p failed to write to ~p, aborting~n", [Pid, Prop]),
+                            self() ! {abort, Pid, self()},
+                            store_loop(Database, NewLocks, NotConfirmed, sets:add_element(Pid, AbortSet), ServerPid)
+                    end
             end;
         {abort, Pid, SenderPid} ->
-            io:format("~p aborted.~n", [Pid]),
+            io:format("~p aborted and cleaned up.~n", [Pid]),
             {AbortActions, FilteredActions} = lists:splitwith(fun({_Type, _Prop, PidArg}) -> PidArg == Pid;
                                                                  ({_Type, _Prop, _OldValue, PidArg}) -> PidArg == Pid end,
                                                               NotConfirmed),
@@ -138,17 +160,17 @@ store_loop(Database, Locks, NotConfirmed, ServerPid) ->
                 ServerPid ->
                     true;
                 _ ->
-                    ServerPid ! {abort, Pid}
+                    ServerPid ! {abort, Pid, self()}
             end,
             RestoredDatabase = undo_actions(Pid, AbortActions, Database),
             UnlockedLocks = unlock_all(Pid, Locks),
-            store_loop(RestoredDatabase, UnlockedLocks, FilteredActions, ServerPid);
+            store_loop(RestoredDatabase, UnlockedLocks, FilteredActions, sets:add_element(Pid, AbortSet), ServerPid);
         {committed, Pid} ->
-            io:format("Database status:~n~p.~n", [Database]),
+            io:format("~nDatabase status:~n~p.~n~n", [Database]),
             io:format("~p transaction committed.~n", [Pid]),
             store_loop(Database, unlock_all(Pid, Locks), lists:filter(fun({_Type, _Prop, PidArg}) -> PidArg /= Pid;
                                                                          ({_Type, _Prop, _OldValue, PidArg}) -> PidArg /= Pid end,
-                                                                      NotConfirmed), ServerPid)
+                                                                      NotConfirmed), AbortSet, ServerPid)
     end.
 
 %%%%%%%%%%%%%%%%%%%%%%% ACTIVE SERVER %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
@@ -181,6 +203,7 @@ unlock_all(Pid, [{Prop, LockType, Pids} | TL]) ->
 lock_handler(Lock, Pid, Locks) ->
     case Lock of
         {Prop, readlock} ->
+            io:format("~p tries to readlock ~p~n", [Pid, Prop]),
             [{Prop, readlock, Pids}] = lists:filter(fun({PropArg, readlock, _PidArgs}) -> PropArg == Prop;
                                                         (_) -> false end,
                                                     Locks),
@@ -198,7 +221,7 @@ lock_handler(Lock, Pid, Locks) ->
                     end
             end;
         {Prop, writelock} ->
-            io:format("Tries to writelock ~p~n", [Prop]),
+            io:format("~p tries to writelock ~p~n", [Pid, Prop]),
             [{Prop, readlock, ReadPids}] = lists:filter(fun({PropArg, readlock, _PidArgs}) -> PropArg == Prop;
                                                         (_) -> false end,
                                                     Locks),
