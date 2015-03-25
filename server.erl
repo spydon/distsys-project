@@ -130,8 +130,7 @@ store_loop(Database, Locks, NotConfirmed, ServerPid) ->
                     self() ! {abort, Pid}
             end;
         {abort, Pid} ->
-            {AbortActions, FilteredActions} = lists:splitwith(fun({_Type, _Prop, Pid}) -> true;
-                                                                 (_) -> false end,
+            {AbortActions, FilteredActions} = lists:splitwith(fun({_Type, _Prop, PidArg}) -> PidArg == Pid end,
                                                               NotConfirmed),
             ServerPid ! {abort, Pid},
             RestoredDatabase = undo_actions(Pid, AbortActions, Database),
@@ -139,8 +138,7 @@ store_loop(Database, Locks, NotConfirmed, ServerPid) ->
             store_loop(RestoredDatabase, UnlockedLocks, FilteredActions, ServerPid);
         {committed, Pid} ->
             Pid ! {committed, self()},
-            store_loop(Database, unlock_all(Pid, Locks), lists:filter(fun({_Type, _Prop, Pid}) -> false;
-                                                                         (_) -> true end,
+            store_loop(Database, unlock_all(Pid, Locks), lists:filter(fun({_Type, _Prop, PidArg}) -> PidArg == Pid end,
                                                                       NotConfirmed), ServerPid)
     end.
 
@@ -174,7 +172,7 @@ unlock_all(Pid, [{Prop, LockType, Pids} | TL]) ->
 lock_handler(Lock, Pid, Locks) ->
     case Lock of
         {Prop, readlock} ->
-            [{Prop, readlock, Pids}] = lists:filter(fun({Prop, readlock, _PidArgs}) -> true;
+            [{Prop, readlock, Pids}] = lists:filter(fun({PropArg, readlock, _PidArgs}) -> PropArg == Prop;
                                                         (_) -> false end,
                                                     Locks),
             case lists:member(Pid, Pids) of
@@ -191,7 +189,7 @@ lock_handler(Lock, Pid, Locks) ->
                     end
             end;
         {Prop, writelock} ->
-            [{Prop, readlock, [WritePid]}] = lists:filter(fun({Prop, writelock, _PidArgs}) -> true;
+            [{Prop, readlock, [WritePid]}] = lists:filter(fun({PropArg, writelock, _PidArgs}) -> PropArg == Prop;
                                                              (_) -> false end,
                                                           Locks),
             case {WritePid == Pid, WritePid == []} of
