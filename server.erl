@@ -35,7 +35,7 @@ initialize() ->
                     {b, {writelock, []}},
                     {c, {writelock, []}},
                     {d, {writelock, []}}],
-    StorePid = spawn_link(fun() -> store_loop(InitialVals, InitialLocks) end),
+    StorePid = spawn_link(fun() -> store_loop(InitialVals, InitialLocks, [], self()) end),
     server_loop([], StorePid, []).
 %%%%%%%%%%%%%%%%%%%%%%% STARTING SERVER %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
@@ -71,26 +71,32 @@ server_loop(ClientList, StorePid, TransState) ->
                     io:format("Not all actions received.~n")
             end,
             server_loop(ClientList, StorePid, delete_actions(Client, TransState));
+        {abort, Client} ->
+            io:format("Transaction for ~p aborted.~n", [Client]),
+            Client ! {abort, self()},
+            server_loop(ClientList, StorePid, delete_actions(Client, TransState));
         {action, Client, Act, Num} ->
             io:format("Received~p, number ~p, from client~p.~n", [Act, Num, Client]),
             case get_actions(Client, TransState) of
                 [] -> 
-                    case Num of 
-                        1 -> 
+                    case Num of
+                        1 ->
+                            case Act of
+                                {read, Prop} -> StorePid ! {read, Prop, Client};
+                                {write, Prop, Value} -> StorePid ! {write, Prop, Value, Client}
+                            end,
                             server_loop(ClientList, StorePid, add_action(Client, Act, Num, TransState));
                         _ ->
-                            Client ! {abort, self()},
-                            io:format("Lost msg detected.~n"),
-                            server_loop(ClientList, StorePid, delete_actions(Client, TransState))
+                            io:format("Lost msg for ~p detected.~n", [Client]),
+                            self() ! {abort, Client}
                     end;
                 [{_, Prev} | _TL] ->
-                    case Prev +1 of
+                    case Prev+1 of
                         Num ->
                             server_loop(ClientList, StorePid, add_action(Client, Act, Num, TransState));
                         _ ->
-                            Client ! {abort, self()},
-                            io:format("Lost msg detected.~n"),
-                            server_loop(ClientList, StorePid, delete_actions(Client, TransState))
+                            io:format("Lost msg for ~p detected.~n", [Client]),
+                            self() ! {abort, Client}
                     end
             end,
             case ClientList of
@@ -99,62 +105,54 @@ server_loop(ClientList, StorePid, TransState) ->
             end
     end.
 
-%% - The logic around executing the transaction is done here
-%%   TODO: How does one operation of a transaction look like?
-transaction([], _StorePid) ->
-    something;
-transaction(Transaction, StorePid) ->
-    something.
-
 %% - The values are maintained here
-store_loop(Database, Locks) ->
+store_loop(Database, Locks, NotConfirmed, ServerPid) ->
     receive
         {print, _Pid} ->
             io:format("Database status:~n~p.~n", [Database]),
-            store_loop(Database, Locks);
-        {transaction, Transaction, Pid} -> % TODO: Probably shouldn't have this one as problem gets too simple?
-            LocksNeeded = lock_check(Transaction),
-            case request_locks(LocksNeeded, Pid, Locks) of
-                {true, ModLocks} ->
-                    Pid ! transaction(Transaction, self());
-                _ ->
-                    %% Abort
-                    Pid ! abort
-            end,
-            store_loop(Database, unlock_all(Pid, Locks));
+            store_loop(Database, Locks, NotConfirmed, ServerPid);
         {read, Prop, Pid} ->
-            Pid ! read(Prop, Database),
-            store_loop(Database, Locks);
-        {write, Prop, Value, _Pid} ->
-            store_loop(write(Prop, Value, Database), Locks);
-        {lock, Prop, LockType, Pid} -> % TODO: Will not work as Lock() is rewritten
-            store_loop(Database, lock({Prop, LockType}, Pid, Locks));
-        {unlock, Prop, LockType, _Pid} -> % TODO: Will not work as Unlock() is rewritten
-            store_loop(Database, unlock({Prop, LockType}, Locks))
+            {Success, NewLocks} = lock_handler({Prop, readlock}, Pid, Locks),
+            case Success of
+                true ->
+                    Pid ! read(Prop, Database),
+                    store_loop(Database, NewLocks, [{read, Prop, Pid} | NotConfirmed], ServerPid);
+                false ->
+                    self() ! {abort, Pid}
+            end;
+        {write, Prop, Value, Pid} ->
+            {Success, NewLocks} = lock_handler({Prop, writelock}, Pid, Locks),
+            case Success of
+                true ->
+                    OldValue = read(Prop, Database),
+                    store_loop(write(Prop, Value, Database), NewLocks, [{write, Prop, OldValue, Pid} | NotConfirmed], ServerPid);
+                false ->
+                    self() ! {abort, Pid}
+            end;
+        {abort, Pid} ->
+            {AbortActions, FilteredActions} = lists:splitwith(fun({_Type, _Prop, Pid}) -> true;
+                                                                 (_) -> false end,
+                                                              NotConfirmed),
+            ServerPid ! {abort, Pid},
+            RestoredDatabase = undo_actions(Pid, AbortActions, Database),
+            UnlockedLocks = unlock_all(Pid, Locks),
+            store_loop(RestoredDatabase, UnlockedLocks, FilteredActions, ServerPid);
+        {committed, Pid} ->
+            Pid ! {committed, self()},
+            store_loop(Database, unlock_all(Pid, Locks), lists:filter(fun({_Type, _Prop, Pid}) -> false;
+                                                                         (_) -> true end,
+                                                                      NotConfirmed), ServerPid)
     end.
 
 %%%%%%%%%%%%%%%%%%%%%%% ACTIVE SERVER %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 %%%%%%%%%%%%%%%%%%%%%%% DATA MODIFICATION METHODS %%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%% - Checks whether all locks can be obtained or not
-%%   TODO: Should probably call store_loop to lock and unlock as problem is
-%%   trivial otherwise
-request_locks(LocksNeeded, ClientPid, Locks) ->
-    request_locks(LocksNeeded, ClientPid, Locks, true).
-request_locks([], _ClientPid, Locks, Result) ->
-    {Result, Locks};
-request_locks([Lock | TL], ClientPid, Locks, Result) ->
-    {Modified, ModLocks} = lock(Lock, ClientPid, Locks),
-    request_locks(TL, ClientPid, ModLocks, Result and Modified).
-
-%% - Checks which locks that are required for Transaction
-lock_check([]) ->
-    [];
-lock_check([{read, Prop} | TL]) ->
-    [{Prop, readlock} | lock_check(TL)];
-lock_check([{write, Prop, _Value} | TL]) ->
-    [{Prop, writelock} | lock_check(TL)].
+undo_actions(_Pid, [], Database) ->
+    Database;
+undo_actions(Pid, [{read, _Prop, _Pid} | TL], Database) ->
+    undo_actions(Pid, TL, Database);
+undo_actions(Pid, [{write, Prop, OldValue, Pid} | TL], Database) ->
+    undo_actions(Pid, TL, write(Prop, OldValue, Database)).
 
 %% - Returns the Database with the tuple containing the Prop key
 %%   set to {Prop, Value}
@@ -165,32 +163,44 @@ write(Prop, Value, Database) ->
 read(Prop, Database) ->
     lists:keyfind(Prop, 1, Database).
 
-%% - Returns the Locks list with true and the Lock tuple set to locked 
-%%   operation succeeded and false and the old Lock tuple if the operation
-%%   failed
-lock(Lock, Pid, Locks) ->
-    Modified = semaphore(Lock, Pid, Locks),
-    {Modified == Locks, Modified}.
-
-%% - Returns the Locks list with the Lock tuple set to unlocked
-unlock(Lock, Locks) -> semaphore(Lock, [], Locks).
-
 %% - Unlock all locks for a certain Pid
 unlock_all(_Pid, []) ->
     [];
-unlock_all(Pid, [{Prop, LockType, Pid} | TL]) ->
-    [{Prop, LockType, []} | unlock_all(Pid, TL)].
+unlock_all(Pid, [{Prop, LockType, Pids} | TL]) ->
+    [{Prop, LockType, lists:delete(Pid, Pids)} | unlock_all(Pid, TL)].
 
 %% - Manipulation of lock tuples, only to be used by the
 %%   lock and unlock functions
-semaphore(_Lock, _Pid, []) ->
-    [];
-semaphore(Lock = {Prop, readlock}, Pid, [{Prop, readlock, []} | TL]) ->
-    [{Prop, readlock, Pid} | semaphore(Lock, Pid, TL)];
-semaphore(Lock = {Prop, writelock}, Pid, [{Prop, LockType, []} | TL]) ->
-    [{Prop, LockType, Pid} | semaphore(Lock, Pid, TL)];
-semaphore(Lock, Pid, [HD | TL]) ->
-    [HD | semaphore(Lock, Pid, TL)].
+lock_handler(Lock, Pid, Locks) ->
+    case Lock of
+        {Prop, readlock} ->
+            [{Prop, readlock, Pids}] = lists:filter(fun({Prop, readlock, _PidArgs}) -> true;
+                                                        (_) -> false end,
+                                                    Locks),
+            case lists:member(Pid, Pids) of
+                true ->
+                    {true, Locks};
+                false ->
+                    case {lists:member({Prop, writelock, []}, Locks), lists:member({Prop, writelock, [Pid]}, Locks)} of
+                        {true, _} ->
+                            {true, [{Prop, readlock, [Pid | Pids]} | lists:delete({Prop, readlock, Pids}, Locks)]};
+                        {_, true} ->
+                            {true, Locks};
+                        {_, _} ->
+                            {false, Locks}
+                    end
+            end;
+        {Prop, writelock} ->
+            [{Prop, readlock, [WritePid]}] = lists:filter(fun({Prop, writelock, _PidArgs}) -> true;
+                                                             (_) -> false end,
+                                                          Locks),
+            case {WritePid == Pid, WritePid == []} of
+                {true, _} ->
+                    {true, Locks};
+                {_, true} ->
+                    {true, [{Prop, writelock, [Pid]} | lists:delete({Prop, writelock, []}, locks)]}
+            end
+    end.
 
 %% add_action(C,A,O,L) 
 %% C = Client
