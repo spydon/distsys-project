@@ -27,14 +27,14 @@ initialize() ->
                    {c, 0},
                    {d, 0}],
     %% All locks set to unlocked (no pid)
-    InitialLocks = [{a, {readlock,  []}},
-                    {b, {readlock,  []}},
-                    {c, {readlock,  []}},
-                    {d, {readlock,  []}},
-                    {a, {writelock, []}},
-                    {b, {writelock, []}},
-                    {c, {writelock, []}},
-                    {d, {writelock, []}}],
+    InitialLocks = [{a, readlock,  []},
+                    {b, readlock,  []},
+                    {c, readlock,  []},
+                    {d, readlock,  []},
+                    {a, writelock, []},
+                    {b, writelock, []},
+                    {c, writelock, []},
+                    {d, writelock, []}],
     StorePid = spawn_link(fun() -> store_loop(InitialVals, InitialLocks, [], self()) end),
     server_loop([], StorePid, []).
 %%%%%%%%%%%%%%%%%%%%%%% STARTING SERVER %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
@@ -63,47 +63,40 @@ server_loop(ClientList, StorePid, TransState) ->
             io:format("get_actions: ~p .~n", [length(get_actions(Client, TransState))]),
             case length(get_actions(Client, TransState)) of
                 NumActions -> 
-                    StorePid ! {actions, self()},
+                    StorePid ! {committed, Client},
                     Client ! {committed, self()},
-                    io:format("All actions received.~n");
+                    io:format("All actions received from ~p.~n", [Client]);
                 _ ->
                     Client ! {abort, self()},
-                    io:format("Not all actions received.~n")
+                    io:format("Not all actions received from ~p.~n", [Client])
             end,
             server_loop(ClientList, StorePid, delete_actions(Client, TransState));
         {abort, Client} ->
             io:format("Transaction for ~p aborted.~n", [Client]),
+            StorePid ! {abort, Client, self()},
             Client ! {abort, self()},
             server_loop(ClientList, StorePid, delete_actions(Client, TransState));
         {action, Client, Act, Num} ->
             io:format("Received~p, number ~p, from client~p.~n", [Act, Num, Client]),
-            case get_actions(Client, TransState) of
-                [] -> 
-                    case Num of
-                        1 ->
-                            case Act of
-                                {read, Prop} -> StorePid ! {read, Prop, Client};
-                                {write, Prop, Value} -> StorePid ! {write, Prop, Value, Client}
-                            end,
-                            server_loop(ClientList, StorePid, add_action(Client, Act, Num, TransState));
-                        _ ->
-                            io:format("Lost msg for ~p detected.~n", [Client]),
-                            self() ! {abort, Client}
-                    end;
-                [{_, Prev} | _TL] ->
-                    case Prev+1 of
-                        Num ->
-                            server_loop(ClientList, StorePid, add_action(Client, Act, Num, TransState));
-                        _ ->
-                            io:format("Lost msg for ~p detected.~n", [Client]),
-                            self() ! {abort, Client}
-                    end
+            case get_previous(get_actions(Client, TransState))+1 of
+                Num ->
+                    case Act of
+                        {read, Prop} -> StorePid ! {read, Prop, Client};
+                        {write, Prop, Value} -> StorePid ! {write, Prop, Value, Client}
+                    end,
+                    server_loop(ClientList, StorePid, add_action(Client, Act, Num, TransState));
+                _ ->
+                    io:format("Lost msg for ~p detected.~n", [Client]),
+                    self() ! {abort, Client}
             end,
             case ClientList of
                 [] -> exit(normal);
                 _ -> server_loop(ClientList, StorePid, TransState)
             end
     end.
+
+get_previous([]) -> 0;
+get_previous([{_, Prev} | _TL]) -> Prev.
 
 %% - The values are maintained here
 store_loop(Database, Locks, NotConfirmed, ServerPid) ->
@@ -112,16 +105,22 @@ store_loop(Database, Locks, NotConfirmed, ServerPid) ->
             io:format("Database status:~n~p.~n", [Database]),
             store_loop(Database, Locks, NotConfirmed, ServerPid);
         {read, Prop, Pid} ->
+            io:format("~p tries to read: ~p.~n", [Pid, Prop]),
             {Success, NewLocks} = lock_handler({Prop, readlock}, Pid, Locks),
+            io:format("Lock state:~n~p~n", [NewLocks]),
             case Success of
                 true ->
-                    Pid ! read(Prop, Database),
+                    io:format("~p read ~p from ~p.~n", [Pid, read(Prop, Database), Prop]),
+                    self() ! {actions, self()},
                     store_loop(Database, NewLocks, [{read, Prop, Pid} | NotConfirmed], ServerPid);
                 false ->
+                    io:format("~p failed to read ~p, aborting~n", [Pid, Prop]),
                     self() ! {abort, Pid}
             end;
         {write, Prop, Value, Pid} ->
+            io:format("~p tries to write ~p to ~p.~n", [Pid, Value, Prop]),
             {Success, NewLocks} = lock_handler({Prop, writelock}, Pid, Locks),
+            io:format("Lock state:~n~p~n", [NewLocks]),
             case Success of
                 true ->
                     OldValue = read(Prop, Database),
@@ -129,16 +128,25 @@ store_loop(Database, Locks, NotConfirmed, ServerPid) ->
                 false ->
                     self() ! {abort, Pid}
             end;
-        {abort, Pid} ->
-            {AbortActions, FilteredActions} = lists:splitwith(fun({_Type, _Prop, PidArg}) -> PidArg == Pid end,
+        {abort, Pid, SenderPid} ->
+            io:format("~p aborted.~n", [Pid]),
+            {AbortActions, FilteredActions} = lists:splitwith(fun({_Type, _Prop, PidArg}) -> PidArg == Pid;
+                                                                 ({_Type, _Prop, _OldValue, PidArg}) -> PidArg == Pid end,
                                                               NotConfirmed),
-            ServerPid ! {abort, Pid},
+            case SenderPid of
+                ServerPid ->
+                    true;
+                _ ->
+                    ServerPid ! {abort, Pid}
+            end,
             RestoredDatabase = undo_actions(Pid, AbortActions, Database),
             UnlockedLocks = unlock_all(Pid, Locks),
             store_loop(RestoredDatabase, UnlockedLocks, FilteredActions, ServerPid);
         {committed, Pid} ->
-            Pid ! {committed, self()},
-            store_loop(Database, unlock_all(Pid, Locks), lists:filter(fun({_Type, _Prop, PidArg}) -> PidArg == Pid end,
+            io:format("Database status:~n~p.~n", [Database]),
+            io:format("~p transaction committed.~n", [Pid]),
+            store_loop(Database, unlock_all(Pid, Locks), lists:filter(fun({_Type, _Prop, PidArg}) -> PidArg /= Pid;
+                                                                         ({_Type, _Prop, _OldValue, PidArg}) -> PidArg /= Pid end,
                                                                       NotConfirmed), ServerPid)
     end.
 
@@ -159,7 +167,7 @@ write(Prop, Value, Database) ->
 
 %% - Returns the Tuple in Database with the Prop key
 read(Prop, Database) ->
-    lists:keyfind(Prop, 1, Database).
+    element(2, lists:keyfind(Prop, 1, Database)).
 
 %% - Unlock all locks for a certain Pid
 unlock_all(_Pid, []) ->
@@ -189,14 +197,17 @@ lock_handler(Lock, Pid, Locks) ->
                     end
             end;
         {Prop, writelock} ->
-            [{Prop, readlock, [WritePid]}] = lists:filter(fun({PropArg, writelock, _PidArgs}) -> PropArg == Prop;
+            io:format("Tries to writelock ~p~n", [Prop]),
+            [{Prop, writelock, WritePid}] = lists:filter(fun({PropArg, writelock, _PidArgs}) -> PropArg == Prop;
                                                              (_) -> false end,
                                                           Locks),
-            case {WritePid == Pid, WritePid == []} of
+            case {WritePid == [Pid], WritePid == []} of
                 {true, _} ->
                     {true, Locks};
                 {_, true} ->
-                    {true, [{Prop, writelock, [Pid]} | lists:delete({Prop, writelock, []}, locks)]}
+                    {true, [{Prop, writelock, [Pid]} | lists:delete({Prop, writelock, []}, Locks)]};
+                {_, _} ->
+                    {false, Locks}
             end
     end.
 

@@ -78,7 +78,7 @@ connected(Window, ServerPid) ->
         {close, ServerPid} ->
             exit(serverDied);
         Other ->
-            io:format("client active unexpected: ~p~n", [Other]),
+            io:format("client unexpected connected: ~p~n", [Other]),
             connected(Window,ServerPid)
     end.
 
@@ -91,7 +91,7 @@ process(Window, ServerPid, Transaction) ->
         {close, ServerPid} ->
             exit(serverDied);
         Other ->
-            io:format("client active unexpected: ~p~n", [Other])
+            io:format("client unexpected process: ~p~n", [Other])
     end.
 
 %% - Sending the transaction and waiting for confirmation
@@ -109,7 +109,7 @@ send(Window, ServerPid, [], TransLength) ->
         {close, ServerPid} ->
             exit(serverDied);
         Other ->
-            io:format("client active unexpected: ~p~n",[Other])
+            io:format("client unexpected send: ~p~n",[Other])
     end;
 send(Window, ServerPid, [H|T], TransLength) -> 
     sleep(3),
