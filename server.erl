@@ -192,7 +192,13 @@ semaphore(Lock = {Prop, writelock}, Pid, [{Prop, LockType, []} | TL]) ->
 semaphore(Lock, Pid, [HD | TL]) ->
     [HD | semaphore(Lock, Pid, TL)].
 
-%% TODO: These need better variable names
+%% add_action(C,A,O,L) 
+%% C = Client
+%% A = Action
+%% O = A's order in its tranaction
+%% L = List of partial transactions received from clients
+%% Adds the tuple {A,O} to the list L 
+%% Its added to the action list of the tuple belonging to client C 
 add_action(_C, _A, _O, []) -> [];
 add_action(C, A, O, [{C, Actions} | T]) -> [{C, [{A, O} | Actions]} | T];
 add_action(C, A, O, [{H, Actions} | T]) -> [{H, Actions} | add_action(C, A, O, T)].
