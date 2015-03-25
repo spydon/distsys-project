@@ -126,6 +126,7 @@ store_loop(Database, Locks, NotConfirmed, ServerPid) ->
                     OldValue = read(Prop, Database),
                     store_loop(write(Prop, Value, Database), NewLocks, [{write, Prop, OldValue, Pid} | NotConfirmed], ServerPid);
                 false ->
+                    io:format("~p failed to write ~p, aborting~n", [Pid, Prop]),
                     self() ! {abort, Pid}
             end;
         {abort, Pid, SenderPid} ->
@@ -192,21 +193,26 @@ lock_handler(Lock, Pid, Locks) ->
                             {true, [{Prop, readlock, [Pid | Pids]} | lists:delete({Prop, readlock, Pids}, Locks)]};
                         {_, true} ->
                             {true, Locks};
-                        {_, _} ->
+                        _ ->
                             {false, Locks}
                     end
             end;
         {Prop, writelock} ->
             io:format("Tries to writelock ~p~n", [Prop]),
+            [{Prop, readlock, ReadPids}] = lists:filter(fun({PropArg, readlock, _PidArgs}) -> PropArg == Prop;
+                                                        (_) -> false end,
+                                                    Locks),
             [{Prop, writelock, WritePid}] = lists:filter(fun({PropArg, writelock, _PidArgs}) -> PropArg == Prop;
                                                              (_) -> false end,
                                                           Locks),
-            case {WritePid == [Pid], WritePid == []} of
-                {true, _} ->
+            case {WritePid == [Pid], WritePid == [], ReadPids == [Pid], ReadPids == []} of
+                {true, _, _, _} ->
                     {true, Locks};
-                {_, true} ->
+                {_, true, true, _} ->
                     {true, [{Prop, writelock, [Pid]} | lists:delete({Prop, writelock, []}, Locks)]};
-                {_, _} ->
+                {_, true, _, true} ->
+                    {true, [{Prop, writelock, [Pid]} | lists:delete({Prop, writelock, []}, Locks)]};
+                _ ->
                     {false, Locks}
             end
     end.
