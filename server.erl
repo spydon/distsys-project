@@ -74,7 +74,6 @@ server_loop(ClientList, StorePid, TransState, AbortSet) ->
         {abort, Client} ->
             io:format("~ts transaction aborted.~n", [get_colour(Client)]),
             StorePid ! {abort, Client},
-            io:format("~nTransaction State:~n~p.~n~n", [TransState]),
             server_loop(ClientList, StorePid, delete_actions(Client, TransState), sets:add_element(Client, AbortSet));
         {action, Client, Act, Num} ->
             case {sets:is_element(Client, AbortSet), get_previous(get_actions(Client, TransState))+1} of
@@ -90,7 +89,7 @@ server_loop(ClientList, StorePid, TransState, AbortSet) ->
                 _ ->
                     io:format("~ts Lost msg detected.~n", [get_colour(Client)]),
                     self() ! {abort, Client},
-                    server_loop(ClientList, StorePid, TransState, [Client | AbortSet])
+                    server_loop(ClientList, StorePid, TransState, sets:add_element(Client, AbortSet))
             end,
             case ClientList of
                 [] -> exit(normal);
