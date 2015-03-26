@@ -1,3 +1,7 @@
+%% Two-Phase locking
+%% Written by Kristiina Ausmees and Lukas Klingsbo
+%% for the Distributed Systems course spring 2015
+
 %% - Server module
 %% - The server module creates a parallel registered process by spawning a process which 
 %% evaluates initialize(). 
@@ -43,8 +47,8 @@ initialize() ->
 
 %%%%%%%%%%%%%%%%%%%%%%% ACTIVE SERVER %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 %% - The server maintains a list of all connected clients and a store holding
+%%   the values of the global variable a, b, c and d 
 
-%% the values of the global variable a, b, c and d 
 server_loop(ClientList, StorePid, TransState, AbortSet) ->
     receive
         {login, MM, Client} -> 
@@ -98,21 +102,24 @@ server_loop(ClientList, StorePid, TransState, AbortSet) ->
             end
     end.
 
+%% - Used to get the sequential id from the previous action performed,
+%%   0 if there is none
 get_previous([]) -> 0;
 get_previous([{_, Prev} | _TL]) -> Prev.
 
+%% - Colour coded messages to make it easier for Jari to read what the **** we are doing.
 error_colour(Msg) -> "\033[0;31m" ++ Msg ++ "\033[0m".
 success_colour(Msg) -> "\033[0;32m" ++ Msg ++ "\033[0m".
 
+%% - Sets a colour of the PID provided, so that they can be easily distinguished
 get_colour(Pid) ->
     Colours = ["0;34","1;34","0;32","1;32","0;36","1;36","0;31",
-    "1;31","0;35","1;35","0;33","1;33","0;37","1;37"],
+               "1;31","0;35","1;35","0;33","1;33","0;37","1;37"],
     Assigned = lists:foldl(fun(S, Sum) -> {X,_} = string:to_integer(S), X + Sum end, 0, 
                            string:tokens(pid_to_list(Pid), ".<>")) rem length(Colours),
     "\033[" ++ lists:nth(Assigned, Colours) ++ "m" ++ pid_to_list(Pid) ++ "\033[0m".
 
-
-%% - The values are maintained here
+%% - The values and locks are maintained here
 store_loop(Database, Locks, NotConfirmed, AbortSet, ServerPid) ->
     receive
         {print, _Pid} ->
@@ -181,6 +188,8 @@ store_loop(Database, Locks, NotConfirmed, AbortSet, ServerPid) ->
 %%%%%%%%%%%%%%%%%%%%%%% ACTIVE SERVER %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 %%%%%%%%%%%%%%%%%%%%%%% DATA MODIFICATION METHODS %%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%% - Undos all actions requested by Pid
 undo_actions(_Pid, [], Database) ->
     Database;
 undo_actions(Pid, [{read, _Prop, _Pid} | TL], Database) ->
