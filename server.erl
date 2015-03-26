@@ -66,7 +66,6 @@ server_loop(ClientList, StorePid, TransState, AbortSet) ->
                 _ ->
                     Client ! {abort, self()},
                     io:format("~ts Not all actions received.~n", [get_colour(Client)]),
-                    io:format("~ts transaction aborted.~n", [get_colour(Client)]),
                     StorePid ! {abort, Client},
                     StorePid ! {committed, Client},
                     io:format("~nTransaction State:~n~p.~n~n", [TransState])
@@ -74,7 +73,7 @@ server_loop(ClientList, StorePid, TransState, AbortSet) ->
             StorePid ! {print, self()},
             server_loop(ClientList, StorePid, delete_actions(Client, TransState), sets:del_element(Client, AbortSet));
         {abort, Client} ->
-            io:format("~ts Transaction aborted.~n", [get_colour(Client)]),
+            io:format("~ts Transaction ~ts.~n", [get_colour(Client), error_colour("aborted")]),
             StorePid ! {abort, Client},
             server_loop(ClientList, StorePid, delete_actions(Client, TransState), sets:add_element(Client, AbortSet));
         {action, Client, Act, Num} ->
@@ -89,7 +88,7 @@ server_loop(ClientList, StorePid, TransState, AbortSet) ->
                     end,
                     server_loop(ClientList, StorePid, add_action(Client, Act, Num, TransState), AbortSet);
                 _ ->
-                    io:format("~ts Lost msg detected.~n", [get_colour(Client)]),
+                    io:format("~ts ~ts msg detected.~n", [get_colour(Client), error_colour("lost")]),
                     self() ! {abort, Client},
                     server_loop(ClientList, StorePid, TransState, sets:add_element(Client, AbortSet))
             end,
@@ -101,6 +100,9 @@ server_loop(ClientList, StorePid, TransState, AbortSet) ->
 
 get_previous([]) -> 0;
 get_previous([{_, Prev} | _TL]) -> Prev.
+
+error_colour(Msg) -> "\033[0;31m" ++ Msg ++ "\033[0m".
+success_colour(Msg) -> "\033[0;32m" ++ Msg ++ "\033[0m".
 
 get_colour(Pid) ->
     Colours = ["0;34","1;34","0;32","1;32","0;36","1;36","0;31",
@@ -115,6 +117,7 @@ store_loop(Database, Locks, NotConfirmed, AbortSet, ServerPid) ->
     receive
         {print, _Pid} ->
             io:format("~nDatabase status:~n~p.~n", [Database]),
+            io:format("~nLock state:~n~p~n~n", [Locks]),
             store_loop(Database, Locks, NotConfirmed, AbortSet, ServerPid);
         {read, Prop, Pid} ->
             case sets:is_element(Pid, AbortSet) of
@@ -126,10 +129,10 @@ store_loop(Database, Locks, NotConfirmed, AbortSet, ServerPid) ->
                     {Success, NewLocks} = lock_handler({Prop, readlock}, Pid, Locks),
                     case Success of
                         true ->
-                            io:format("~ts Read ~p from ~p.~n", [get_colour(Pid), read(Prop, Database), Prop]),
+                            io:format("~ts ~ts ~p from ~p.~n", [get_colour(Pid), success_colour("read"), read(Prop, Database), Prop]),
                             store_loop(Database, NewLocks, [{read, Prop, Pid} | NotConfirmed], AbortSet, ServerPid);
                         false ->
-                            io:format("~ts Failed to read ~p, aborting~n", [get_colour(Pid), Prop]),
+                            io:format("~ts Failed to ~ts ~p, aborting~n", [get_colour(Pid), error_colour("read"), Prop]),
                             self() ! {abort, Pid},
                             store_loop(Database, NewLocks, NotConfirmed, sets:add_element(Pid, AbortSet), ServerPid)
                     end
@@ -144,17 +147,17 @@ store_loop(Database, Locks, NotConfirmed, AbortSet, ServerPid) ->
                     {Success, NewLocks} = lock_handler({Prop, writelock}, Pid, Locks),
                     case Success of
                         true ->
-                            io:format("~ts Successfully wrote ~p to ~p.~n", [get_colour(Pid), Value, Prop]),
+                            io:format("~ts Successfully ~ts ~p to ~p.~n", [get_colour(Pid), success_colour("wrote"), Value, Prop]),
                             OldValue = read(Prop, Database),
                             store_loop(write(Prop, Value, Database), NewLocks, [{write, Prop, OldValue, Pid} | NotConfirmed], AbortSet, ServerPid);
                         false ->
-                            io:format("~ts Failed to write to ~p, aborting~n", [get_colour(Pid), Prop]),
+                            io:format("~ts Failed to ~ts to ~p, aborting~n", [get_colour(Pid), Prop, error_colour("write")]),
                             self() ! {abort, Pid},
                             store_loop(Database, NewLocks, NotConfirmed, sets:add_element(Pid, AbortSet), ServerPid)
                     end
             end;
         {abort, Pid} ->
-            io:format("~ts Aborted and cleaned up.~n", [get_colour(Pid)]),
+            io:format("~ts ~ts and cleaned up.~n", [get_colour(Pid), error_colour("Aborted")]),
             {AbortActions, FilteredActions} = lists:splitwith(fun({_Type, _Prop, PidArg}) -> PidArg == Pid;
                                                                  ({_Type, _Prop, _OldValue, PidArg}) -> PidArg == Pid end,
                                                               NotConfirmed),
@@ -165,13 +168,11 @@ store_loop(Database, Locks, NotConfirmed, AbortSet, ServerPid) ->
             case sets:is_element(Pid, AbortSet) of
                 false ->
                     Pid ! {committed, ServerPid},
-                    io:format("~ts Transaction successful!~n", [get_colour(Pid)]);
+                    io:format("~ts Transaction ~ts!~n", [get_colour(Pid), success_colour("successful")]);
                 true ->
                     Pid ! {abort, ServerPid},
-                    io:format("~ts Transaction aborted, did not receive all locks needed~n", [get_colour(Pid)])
+                    io:format("~ts Transaction ~ts!~n", [get_colour(Pid), error_colour("aborted")])
             end,
-            io:format("~nDatabase status:~n~p.~n", [Database]),
-            io:format("~nLock state:~n~p~n~n", [Locks]),
             store_loop(Database, unlock_all(Pid, Locks), lists:filter(fun({_Type, _Prop, PidArg}) -> PidArg /= Pid;
                                                                          ({_Type, _Prop, _OldValue, PidArg}) -> PidArg /= Pid end,
                                                                       NotConfirmed), sets:del_element(Pid, AbortSet), ServerPid)
@@ -222,7 +223,7 @@ lock_handler(Lock, Pid, Locks) ->
                             io:format("~ts Got readlock ~p~n", [get_colour(Pid), Prop]),
                             {true, Locks};
                         _ ->
-                            io:format("~ts Failed to get readlock ~p~n", [get_colour(Pid), Prop]),
+                            io:format("~ts ~ts to get readlock ~p~n", [get_colour(Pid), error_colour("Failed"), Prop]),
                             {false, Locks}
                     end
             end;
@@ -244,7 +245,7 @@ lock_handler(Lock, Pid, Locks) ->
                     io:format("~ts Got writelock ~p~n", [get_colour(Pid), Prop]),
                     {true, [{Prop, writelock, [Pid]} | lists:delete({Prop, writelock, []}, Locks)]};
                 _ ->
-                    io:format("~ts Failed to get writelock ~p~n", [get_colour(Pid), Prop]),
+                    io:format("~ts ~ts to get writelock ~p~n", [get_colour(Pid), error_colour("Failed"), Prop]),
                     {false, Locks}
             end
     end.
