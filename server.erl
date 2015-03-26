@@ -65,10 +65,10 @@ server_loop(ClientList, StorePid, TransState, AbortSet) ->
                     StorePid ! {committed, Client};
                 _ ->
                     Client ! {abort, self()},
+                    io:format("~nTransaction State:~n~p.~n~n", [TransState]),
                     io:format("~ts Not all actions received.~n", [get_colour(Client)]),
                     StorePid ! {abort, Client},
-                    StorePid ! {committed, Client},
-                    io:format("~nTransaction State:~n~p.~n~n", [TransState])
+                    StorePid ! {committed, Client}
             end,
             StorePid ! {print, self()},
             server_loop(ClientList, StorePid, delete_actions(Client, TransState), sets:del_element(Client, AbortSet));
