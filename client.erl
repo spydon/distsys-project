@@ -1,3 +1,4 @@
+%% Kristiina Ausmees and Lukas Klingsbo
 %% - Client module
 %% - The client module creates a parallel process by spawning handler. 
 %% - The handler does the following: 
